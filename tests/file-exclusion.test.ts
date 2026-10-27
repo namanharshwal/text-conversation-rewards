@@ -72,6 +72,19 @@ describe("ReviewIncentivizerModule file exclusion", () => {
     );
     expect(result).toEqual({ addition: 100, deletion: 100 });
   });
+
+  it("should correctly exclude files when pattern has leading slashes", async () => {
+    const result = await reviewIncentivizer.getReviewableDiff(
+      "owner",
+      "repo",
+      "baseSha",
+      "headSha",
+      new PullRequestData({} as never, "test-owner", "test-repo", 1),
+      ["/dist/**"]
+    );
+    // dist/generated.ts and dist/lang_generated.ts are excluded (50 each = 100 excluded)
+    expect(result).toEqual({ addition: 150, deletion: 150 });
+  });
 });
 
 function mockFileResponse(content: string): Promise<OctokitResponse<unknown>> {

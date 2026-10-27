@@ -3,7 +3,7 @@ import {
   ReviewIncentivizerConfiguration,
   reviewIncentivizerConfigurationType,
 } from "../configuration/review-incentivizer-config";
-import { GitHubPullRequestReviewState } from "../github-types";
+import { GitHubPullRequestReviewComment, GitHubPullRequestReviewState } from "../github-types";
 import { getExcludedFiles, shouldExcludeFile } from "../helpers/excluded-files";
 import { PullRequestData } from "../helpers/pull-request-data";
 import { IssueActivity } from "../issue-activity";
@@ -57,7 +57,10 @@ export class ReviewIncentivizerModule extends BaseModule {
             baseRef,
             headOwnerRepo ?? "",
             reviewsByUser,
-            priority
+            priority,
+            linkedPullReviews.reviewComments ?? [],
+            linkedPullReviews.self.additions,
+            linkedPullReviews.self.deletions
           );
           reward.reviewRewards.push({ reviews: reviewDiffs, url: linkedPullReviews.self.html_url });
         }
@@ -115,19 +118,55 @@ export class ReviewIncentivizerModule extends BaseModule {
     return reviewEffect;
   }
 
+  private _isValidReview(
+    review: GitHubPullRequestReviewState,
+    reviewComments: GitHubPullRequestReviewComment[]
+  ): boolean {
+    if (!review.commit_id || review.state === "DISMISSED" || review.state === "PENDING") {
+      return false;
+    }
+    const hasBody = Boolean(review.body && review.body.trim().length > 0);
+    const hasComments = reviewComments.some((c) => c.pull_request_review_id === review.id);
+    return hasBody || hasComments;
+  }
+
+  private _applyLimits(
+    effect: { addition: number; deletion: number },
+    cumulative: { additions: number; deletions: number },
+    limits: { maxAdditions?: number; maxDeletions?: number }
+  ): { addition: number; deletion: number } {
+    let addition = effect.addition;
+    let deletion = effect.deletion;
+
+    if (typeof limits.maxAdditions === "number") {
+      const remainingAdditions = Math.max(0, limits.maxAdditions - cumulative.additions);
+      addition = Math.min(addition, remainingAdditions);
+    }
+    if (typeof limits.maxDeletions === "number") {
+      const remainingDeletions = Math.max(0, limits.maxDeletions - cumulative.deletions);
+      deletion = Math.min(deletion, remainingDeletions);
+    }
+
+    cumulative.additions += addition;
+    cumulative.deletions += deletion;
+    return { addition, deletion };
+  }
+
   async fetchReviewDiffRewards(
     baseOwner: string,
     baseRepo: string,
     baseRef: string,
     headOwnerRepo: string,
     reviewsByUser: GitHubPullRequestReviewState[],
-    priority: number
+    priority: number,
+    reviewComments: GitHubPullRequestReviewComment[] = [],
+    maxAdditions?: number,
+    maxDeletions?: number
   ) {
-    if (reviewsByUser.length == 0) {
+    if (reviewsByUser.length === 0) {
       this.context.logger.debug("No reviews found for this pull request", { baseOwner, baseRepo, baseRef });
       return;
     }
-    const reviews: ReviewScore[] = [];
     const pullNumber = Number(reviewsByUser[0].pull_request_url.split("/").slice(-1)[0]);
 
     const prData = new PullRequestData(this.context, baseOwner, baseRepo, pullNumber);
@@ -139,11 +178,21 @@ export class ReviewIncentivizerModule extends BaseModule {
       throw this.context.logger.error("Could not fetch base commit for this pull request");
     }
     const excludedFilePatterns = await getExcludedFiles(this.context, baseOwner, baseRepo, baseRef);
-    for (const [i, currentReview] of reviewsByUser.entries()) {
-      if (!currentReview.commit_id) continue;
 
-      const previousReview = reviewsByUser[i - 1];
-      const baseSha = previousReview?.commit_id ? previousReview.commit_id : firstCommitSha;
+    const cumulative = { additions: 0, deletions: 0 };
+    let lastCreditedCommitSha = firstCommitSha;
+    const reviews: ReviewScore[] = [];
+
+    for (const currentReview of reviewsByUser) {
+      if (!this._isValidReview(currentReview, reviewComments)) {
+        this.context.logger.debug("Skipping review without comments or body", {
+          reviewId: currentReview.id,
+          state: currentReview.state,
+        });
+        continue;
+      }
+
+      const baseSha = lastCreditedCommitSha;
       const headSha = `${headOwnerRepo.replace("/", ":")}:${currentReview.commit_id}`;
 
       if (headSha && baseSha !== currentReview.commit_id) {
@@ -156,18 +205,24 @@ export class ReviewIncentivizerModule extends BaseModule {
             prData,
             excludedFilePatterns
           );
+
+          const cappedEffect = this._applyLimits(reviewEffect, cumulative, { maxAdditions, maxDeletions });
+          if (currentReview.commit_id) {
+            lastCreditedCommitSha = currentReview.commit_id;
+          }
+
           this.context.logger.debug("Fetched diff between commits", {
             baseOwner,
             baseRepo,
             baseSha,
             headSha,
-            reviewEffect,
+            reviewEffect: cappedEffect,
           });
           reviews.push({
             reviewId: currentReview.id,
-            effect: reviewEffect,
-            reward: ((reviewEffect.addition + reviewEffect.deletion) * priority) / this._baseRate,
-            priority: priority,
+            effect: cappedEffect,
+            reward: ((cappedEffect.addition + cappedEffect.deletion) * priority) / this._baseRate,
+            priority,
           });
         } catch (e) {
           this.context.logger.error(`Failed to get diff between commits ${baseSha} and ${headSha}:`, { e });

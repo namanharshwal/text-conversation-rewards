@@ -13,6 +13,7 @@ import cfg from "./__mocks__/results/valid-configuration.json";
 import "./helpers/permit-mock";
 import Mock = jest.Mock;
 import { http, HttpResponse } from "msw";
+import { GitHubPullRequestReviewState } from "../src/github-types";
 
 const ctx = {
   eventName: "issues.closed",
@@ -242,5 +243,92 @@ describe("Review Incentivizer", () => {
     expect(diff["added.txt"]).toEqual({ addition: 10, deletion: 5 });
     expect(diff["modified.txt"]).toEqual({ addition: 2, deletion: 1 });
     expect(diff["removed.txt"]).toEqual(undefined);
+  });
+
+  it("Should skip empty approval reviews without comments or body", async () => {
+    const { ReviewIncentivizerModule } = await import("../src/parser/review-incentivizer-module");
+    const reviewIncentivizerModule = new ReviewIncentivizerModule(ctx);
+
+    jest.spyOn(PullRequestData.prototype, "fetchData").mockResolvedValue();
+    jest
+      .spyOn(PullRequestData.prototype, "pullCommits", "get")
+      .mockReturnValue([{ sha: "base-sha", parentCount: 1, parents: [{ sha: "initial-base" }] }]);
+    jest.spyOn(reviewIncentivizerModule, "getReviewableDiff").mockResolvedValue({
+      addition: 500,
+      deletion: 10,
+    });
+
+    const reviews = [
+      {
+        id: 1,
+        body: null as unknown as string,
+        state: "APPROVED",
+        commit_id: "commit-1",
+        pull_request_url: "https://api.github.com/repos/owner/repo/pulls/10",
+      },
+    ] as unknown as GitHubPullRequestReviewState[];
+
+    const result = await reviewIncentivizerModule.fetchReviewDiffRewards(
+      "owner",
+      "repo",
+      "main",
+      "owner:repo",
+      reviews,
+      1,
+      [],
+      1000,
+      100
+    );
+
+    expect(result).toEqual([]);
+  });
+
+  it("Should reward review with comments and cap cumulative additions to maxAdditions", async () => {
+    const { ReviewIncentivizerModule } = await import("../src/parser/review-incentivizer-module");
+    const reviewIncentivizerModule = new ReviewIncentivizerModule(ctx);
+
+    jest.spyOn(PullRequestData.prototype, "fetchData").mockResolvedValue();
+    jest
+      .spyOn(PullRequestData.prototype, "pullCommits", "get")
+      .mockReturnValue([{ sha: "base-sha", parentCount: 1, parents: [{ sha: "initial-base" }] }]);
+    jest.spyOn(reviewIncentivizerModule, "getReviewableDiff").mockResolvedValue({
+      addition: 5000,
+      deletion: 50,
+    });
+
+    const reviews = [
+      {
+        id: 101,
+        body: "Detailed review comments",
+        state: "COMMENTED",
+        commit_id: "commit-1",
+        pull_request_url: "https://api.github.com/repos/owner/repo/pulls/10",
+      },
+      {
+        id: 102,
+        body: "Second review pass",
+        state: "COMMENTED",
+        commit_id: "commit-2",
+        pull_request_url: "https://api.github.com/repos/owner/repo/pulls/10",
+      },
+    ] as unknown as GitHubPullRequestReviewState[];
+
+    const result = await reviewIncentivizerModule.fetchReviewDiffRewards(
+      "owner",
+      "repo",
+      "main",
+      "owner:repo",
+      reviews,
+      1,
+      [],
+      6000,
+      60
+    );
+
+    expect(result?.length).toBe(2);
+    expect(result?.[0].effect).toEqual({ addition: 5000, deletion: 50 });
+    expect(result?.[1].effect).toEqual({ addition: 1000, deletion: 10 });
+    const totalAdditions = (result?.[0].effect.addition ?? 0) + (result?.[1].effect.addition ?? 0);
+    expect(totalAdditions).toBe(6000);
   });
 });

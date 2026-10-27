@@ -81,10 +81,20 @@ function parseTsConfigExclude(content: string): string[] {
 function matchesGitPattern(filePath: string, pattern: string): boolean {
   if (!pattern) return false;
 
-  if (pattern.includes("/")) {
-    return minimatch(filePath, pattern, { matchBase: false });
+  const normalizedPath = filePath.startsWith("/") ? filePath.slice(1) : filePath;
+  const cleanPattern = pattern.startsWith("/") ? pattern.slice(1) : pattern;
+
+  if (cleanPattern.includes("/")) {
+    return (
+      minimatch(normalizedPath, cleanPattern, { matchBase: false }) ||
+      minimatch(normalizedPath, `${cleanPattern}/**`, { matchBase: false })
+    );
   } else {
-    return minimatch(basename(filePath), pattern) || minimatch(filePath, `**/${pattern}`);
+    return (
+      minimatch(basename(normalizedPath), cleanPattern) ||
+      minimatch(normalizedPath, `**/${cleanPattern}`) ||
+      minimatch(normalizedPath, `**/${cleanPattern}/**`)
+    );
   }
 }
 
@@ -162,16 +172,22 @@ export function shouldExcludeFile(filePath: string, patterns?: string[] | null):
   if (!patterns?.length) return false;
   let isExcluded = false;
 
+  const normalizedPath = filePath.startsWith("/") ? filePath.slice(1) : filePath;
+
   for (const originalPattern of patterns) {
     if (!originalPattern) continue;
     const isNeg = originalPattern.startsWith("!");
     let pattern = isNeg ? originalPattern.slice(1) : originalPattern;
 
+    if (pattern.startsWith("/")) {
+      pattern = pattern.slice(1);
+    }
+
     if (pattern.endsWith("/")) {
       pattern = `${pattern}**`;
     }
 
-    if (matchesGitPattern(filePath, pattern)) {
+    if (matchesGitPattern(normalizedPath, pattern)) {
       isExcluded = !isNeg;
     }
   }
