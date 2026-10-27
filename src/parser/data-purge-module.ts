@@ -51,14 +51,23 @@ export class DataPurgeModule extends BaseModule {
 
   private _cleanCommentBody(body: string): string {
     const urlRegex = /(?<!]\(|["'=])(https?:\/\/[^\s<>"'\]]+)(?!\)|["'])/gi;
+    const sanitized = body
+      // Remove quoted text
+      .replace(/^>.*$/gm, "")
+      // Remove HTML comments
+      .replace(/<!--[\s\S]*?-->/g, "");
+
+    // If the comment starts with a slash command, the entire comment and multiline payload belong to the command
+    if (/^\s*\/[a-zA-Z][a-zA-Z0-9_-]*(?:\s|$)/.test(sanitized)) {
+      return "";
+    }
+
     return (
-      body
-        // Remove quoted text
-        .replace(/^>.*$/gm, "")
-        // Remove commands such as /start
-        .replace(/^\/.+/g, "")
-        // Remove HTML comments
-        .replace(/<!--[\s\S]*?-->/g, "")
+      sanitized
+        // Remove multiline /ask commands and payloads
+        .replace(/^\/ask(?:\s[\s\S]*)?$/gm, "")
+        // Remove single-line commands such as /start
+        .replace(/^\/[a-zA-Z][a-zA-Z0-9_-]*(?:[ \t].*)?$/gm, "")
         // Remove the footnotes
         .replace(/^###### .*?\[\^\d+\^][\s\S]*$/gm, "")
         .replace(/^\[\^[\w-]+\^?]:.*$/gm, "")
