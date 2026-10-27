@@ -206,7 +206,7 @@ export class ReviewIncentivizerModule extends BaseModule {
             excludedFilePatterns
           );
 
-          const cappedEffect = this._applyLimits(reviewEffect, cumulative, { maxAdditions, maxDeletions });
+          const limitedEffect = this._applyLimits(reviewEffect, cumulative, { maxAdditions, maxDeletions });
           if (currentReview.commit_id) {
             lastCreditedCommitSha = currentReview.commit_id;
           }
@@ -216,12 +216,12 @@ export class ReviewIncentivizerModule extends BaseModule {
             baseRepo,
             baseSha,
             headSha,
-            reviewEffect: cappedEffect,
+            reviewEffect: limitedEffect,
           });
           reviews.push({
             reviewId: currentReview.id,
-            effect: cappedEffect,
-            reward: ((cappedEffect.addition + cappedEffect.deletion) * priority) / this._baseRate,
+            effect: limitedEffect,
+            reward: ((limitedEffect.addition + limitedEffect.deletion) * priority) / this._baseRate,
             priority,
           });
         } catch (e) {
