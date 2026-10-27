@@ -55,7 +55,15 @@ export class Erc20Wrapper {
    * @returns ERC20 token symbol
    */
   async getSymbol() {
-    return await this._contract.symbol();
+    try {
+      return await this._contract.symbol();
+    } catch (error) {
+      const network = await this._contract.provider?.getNetwork?.().catch(() => null);
+      const chainId = network?.chainId ?? "unknown";
+      throw new Error(`This token \`${this._contract.address}\` was not found on network ID \`${chainId}\``, {
+        cause: error,
+      });
+    }
   }
 
   /**
@@ -63,7 +71,15 @@ export class Erc20Wrapper {
    * @returns ERC20 token decimals
    */
   async getDecimals() {
-    return await this._contract.decimals();
+    try {
+      return await this._contract.decimals();
+    } catch (error) {
+      const network = await this._contract.provider?.getNetwork?.().catch(() => null);
+      const chainId = network?.chainId ?? "unknown";
+      throw new Error(`This token \`${this._contract.address}\` was not found on network ID \`${chainId}\``, {
+        cause: error,
+      });
+    }
   }
 
   /**

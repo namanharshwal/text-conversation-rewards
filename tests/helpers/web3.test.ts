@@ -55,6 +55,20 @@ describe("web3.ts", () => {
     expect(tokenBalance).toEqual(BigNumber.from("1000"));
   }, 120000);
 
+  it("Should throw a clear error when token contract symbol() call reverts on wrong network (#271)", async () => {
+    const failingContract = {
+      address: "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d",
+      provider: new MockProvider(1),
+      symbol: jest.fn(async () => {
+        throw new Error('call revert exception (method="symbol()", data="0x", code=CALL_EXCEPTION)');
+      }),
+    };
+    const wrapper = new Erc20Wrapper(failingContract as unknown as ethers.Contract);
+    await expect(wrapper.getSymbol()).rejects.toThrow(
+      "This token `0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d` was not found on network ID `1`"
+    );
+  });
+
   it("Should return correct wallet address", async () => {
     const evmWallet = await getEvmWallet(
       "100958e64966448354216e91d4d4b9418c3fa0cb0a21b935535ced1df8145a0e",
